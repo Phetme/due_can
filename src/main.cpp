@@ -56,7 +56,7 @@ void loop() {
   /* 1) เก็บอักษรจาก Serial ลง buffer */
   while (Serial.available()) {
     char c = Serial.read();
-Serial.println(c);
+    Serial.println(c);
     if (c == '\r') continue;             // ข้าม CR (สำหรับบาง terminal)
 
     if (c == '\n') {                     // เจอ Enter → ส่ง CAN
