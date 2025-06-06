@@ -36,7 +36,7 @@
 #define OD_ACTUAL_VELOCITY 0x606C
 
 #define MODE_PROFILE_VELOCITY 3
-#define MODE_PROFILE_VELOCITY_STORE 0x0A
+#define MODE_PROFILE_VELOCITY_STORE 0xA
 static const uint32_t ENCODER_RESOLUTION = 10000;    // Pulse / rev
 
 
@@ -115,7 +115,7 @@ void setup()
 
   delay(500);
   // processCheckConnectWithTimeout(10000);
-          currentState = STATE_READY;
+          currentState = INIT_STORE;
 
   stateStartTime = millis();
 }
@@ -295,7 +295,7 @@ void updateStateMachine()
   switch (currentState)
   {
   case INIT_STORE:
-    if (sendSDO_1Byte(OD_STORE_MODE, 0x00, MODE_PROFILE_VELOCITY_STORE))
+    if (sendSDO_1Byte(OD_STORE_MODE, 0x01, MODE_PROFILE_VELOCITY_STORE))
     {
       waitingForResponse = true;
       stateStartTime = millis();
@@ -327,7 +327,7 @@ void updateStateMachine()
   case STATE_READY:
     Serial.println("🎉 Driver Ready! Sending demo velocity...");
     // setSpeed(-100, 100);
-    setSpeedRPM(150.0f);        // ← ใช้ฟังก์ชันล้อเดียว
+    setSpeedRPM(300.0f);        // ← ใช้ฟังก์ชันล้อเดียว
 
     waitingForResponse = true;
     stateStartTime = millis();
