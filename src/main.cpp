@@ -16,10 +16,6 @@
 #include "Arduino.h"
 #include "variant.h"
 #include <due_can.h>
-// Arduino Due CANopen Servo Controller (Non-blocking, State Machine)
-// ใช้กับไลบรารี due_can + CAN0
-#include <due_can.h>
-
 static const uint32_t BASE_ID = 0x10;     // ปรับได้ตามต้องการ
 static const size_t   MAX_BUF = 64;       // ยาวสุดที่รองรับต่อข้อความ
 
@@ -29,13 +25,13 @@ void setup() {
   Can0.begin(CAN_BPS_500K);               // 500 kbit/s
   Serial.println("Type text then <Enter> to send over CAN");
 }
-
 /* ส่งข้อมูลยาว len ไบต์ ออก CAN 8-ไบต์/เฟรม */
 void sendCAN(const uint8_t *data, size_t len) {
   for (size_t off = 0; off < len; off += 8) {
     CAN_FRAME tx;
     tx.id       = BASE_ID;
     tx.extended = 0;
+    // กำหนด DLC (Data Length Code) ขึ้นอยู่กับว่า “ส่วนที่เหลือ” ยาวเท่าไร - ถ้าเหลือ ≥ 8 ไบต์ → ใส่ 8 - ถ้าเหลือน้อยกว่า 8 → ใส่จำนวนที่เหลือจริง
     tx.length   = (len - off >= 8) ? 8 : (len - off);
 
     /* คัดไบต์ลงเฟรม */
