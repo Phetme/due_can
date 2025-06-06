@@ -19,7 +19,6 @@
 // Arduino Due CANopen Servo Controller (Non-blocking, State Machine)
 // ใช้กับไลบรารี due_can + CAN0
 
-
 // ====== CONFIG ======
 #define SERVO_NODE_ID 1
 #define CAN_INTERFACE Can0
@@ -30,12 +29,17 @@
 #define CHECK_RESPONSE(node_id) (0x700 + node_id)
 
 // Object Dictionary
+#define OD_STORE_MODE 0x2FF0
 #define OD_ENABLE_MODE 0x6040
 #define OD_OPERATION_MODE 0x6060
 #define OD_TARGET_VELOCITY 0x60FF
 #define OD_ACTUAL_VELOCITY 0x606C
 
 #define MODE_PROFILE_VELOCITY 3
+#define MODE_PROFILE_VELOCITY_STORE 0x0A
+static const uint32_t ENCODER_RESOLUTION = 10000;    // Pulse / rev
+
+
 #define WRITE_1_BYTE 0x2F
 #define WRITE_2_BYTES 0x2B
 #define WRITE_4_BYTES 0x23
@@ -46,12 +50,12 @@
 #define CTRL_ENABLE_OPERATION 0x000F
 
 // ====== STATE ======
-enum InitState {
+enum InitState
+{
+  INIT_STORE,
   INIT_START,
   INIT_SET_MODE,
   INIT_ENABLE1,
-  INIT_ENABLE2,
-  INIT_ENABLE3,
   STATE_READY,
   STATE_ERROR
 };
@@ -62,7 +66,8 @@ bool waitingForResponse = false;
 bool init_can = false;
 
 // ====== STRUCT ======
-struct SpeedController {
+struct SpeedController
+{
   int32_t target_speed_rpm;
   int32_t actual_speed_rpm;
   uint16_t status_word;
@@ -81,7 +86,8 @@ struct SpeedController {
 
 SpeedController speed_ctrl = {};
 
-struct TimeControl {
+struct TimeControl
+{
   unsigned long time_set;
   unsigned long prve_set;
   unsigned long time_check_msg;
@@ -94,42 +100,52 @@ TimeControl time_control = {};
 void processCheckConnectWithTimeout(unsigned long timeout_ms);
 void updateStateMachine();
 void checkCANMessages();
-
+bool setSpeedRPM(float rpm);
+int32_t rpmToDEC(float rpm, uint32_t enc = ENCODER_RESOLUTION);
 // ====== SETUP ======
-void setup() {
+void setup()
+{
   Serial.begin(115200);
-  while (!Serial);
+  while (!Serial)
+    ;
 
   Serial.println("Starting CAN0 at 500kbps...");
   CAN_INTERFACE.begin(CAN_BPS_500K);
   CAN_INTERFACE.watchFor();
 
   delay(500);
-  processCheckConnectWithTimeout(10000);
+  // processCheckConnectWithTimeout(10000);
+          currentState = STATE_READY;
+
   stateStartTime = millis();
 }
 
-void loop() {
+void loop()
+{
   time_control.time_set = millis();
   time_control.time_check_msg = millis();
 
-  if (time_control.time_set - time_control.prve_set >= (1000 / 50)) {
-    if (!waitingForResponse) {
+  if (time_control.time_set - time_control.prve_set >= (1000 / 50))
+  {
+    if (!waitingForResponse)
+    {
       updateStateMachine();
     }
     time_control.prve_set = time_control.time_set;
   }
 
-  if (time_control.time_check_msg - time_control.prve_check_msg >= (1000 / 10)) {
+  if (time_control.time_check_msg - time_control.prve_check_msg >= (1000 / 10))
+  {
     // if (waitingForResponse) {
-      checkCANMessages();
+    checkCANMessages();
     // }
     time_control.prve_check_msg = time_control.time_check_msg;
   }
 }
 
 // ====== SDO SEND ======
-bool sendSDO_1Byte(uint16_t index, uint8_t subindex, uint8_t data) {
+bool sendSDO_1Byte(uint16_t index, uint8_t subindex, uint8_t data)
+{
   CAN_FRAME frame;
   frame.id = SDO_REQUEST(SERVO_NODE_ID);
   frame.length = 8;
@@ -143,7 +159,8 @@ bool sendSDO_1Byte(uint16_t index, uint8_t subindex, uint8_t data) {
   frame.data.bytes[6] = 0;
   frame.data.bytes[7] = 0;
   bool sent = CAN_INTERFACE.sendFrame(frame);
-  if (sent) {
+  if (sent)
+  {
     char buf[64];
     snprintf(buf, sizeof(buf), "[TX] SDO 1B %04X:%02X = %02X", index, subindex, data);
     Serial.println(buf);
@@ -151,7 +168,8 @@ bool sendSDO_1Byte(uint16_t index, uint8_t subindex, uint8_t data) {
   return sent;
 }
 
-bool sendSDO_2Bytes(uint16_t index, uint8_t subindex, uint16_t data) {
+bool sendSDO_2Bytes(uint16_t index, uint8_t subindex, uint16_t data)
+{
   CAN_FRAME frame;
   frame.id = SDO_REQUEST(SERVO_NODE_ID);
   frame.length = 8;
@@ -165,7 +183,8 @@ bool sendSDO_2Bytes(uint16_t index, uint8_t subindex, uint16_t data) {
   frame.data.bytes[6] = 0;
   frame.data.bytes[7] = 0;
   bool sent = CAN_INTERFACE.sendFrame(frame);
-  if (sent) {
+  if (sent)
+  {
     char buf[64];
     snprintf(buf, sizeof(buf), "[TX] SDO 2B %04X:%02X = %04X", index, subindex, data);
     Serial.println(buf);
@@ -173,7 +192,8 @@ bool sendSDO_2Bytes(uint16_t index, uint8_t subindex, uint16_t data) {
   return sent;
 }
 
-bool sendSDO_4Bytes(uint16_t index, uint8_t subindex, uint32_t data) {
+bool sendSDO_4Bytes(uint16_t index, uint8_t subindex, uint32_t data)
+{
   CAN_FRAME frame;
   frame.id = SDO_REQUEST(SERVO_NODE_ID);
   frame.length = 8;
@@ -187,7 +207,8 @@ bool sendSDO_4Bytes(uint16_t index, uint8_t subindex, uint32_t data) {
   frame.data.bytes[6] = (data >> 16) & 0xFF;
   frame.data.bytes[7] = (data >> 24) & 0xFF;
   bool sent = CAN_INTERFACE.sendFrame(frame);
-  if (sent) {
+  if (sent)
+  {
     char buf[64];
     snprintf(buf, sizeof(buf), "[TX] SDO 4B %04X:%02X = %08lX", index, subindex, data);
     Serial.println(buf);
@@ -195,14 +216,18 @@ bool sendSDO_4Bytes(uint16_t index, uint8_t subindex, uint32_t data) {
   return sent;
 }
 
-void checkCANMessages() {
+void checkCANMessages()
+{
   CAN_FRAME frame;
-  if (CAN_INTERFACE.available()) {
+  if (CAN_INTERFACE.available())
+  {
     CAN_INTERFACE.read(frame);
 
-    if (frame.id == SDO_RESPONSE(SERVO_NODE_ID)) {
+    if (frame.id == SDO_RESPONSE(SERVO_NODE_ID))
+    {
       Serial.print("[RX] SDO Response: ");
-      for (int i = 0; i < frame.length; i++) {
+      for (int i = 0; i < frame.length; i++)
+      {
         char hexbuf[8];
         snprintf(hexbuf, sizeof(hexbuf), "%02X", frame.data.bytes[i]);
         Serial.print(hexbuf);
@@ -210,16 +235,19 @@ void checkCANMessages() {
       }
       Serial.println();
       waitingForResponse = false;
-
-    } else if (frame.id == CHECK_RESPONSE(SERVO_NODE_ID)) {
+    }
+    else if (frame.id == CHECK_RESPONSE(SERVO_NODE_ID))
+    {
       Serial.println("[RX] Heartbeat detected!");
       init_can = true;
-
-    } else {
+    }
+    else
+    {
       char idbuf[32];
       snprintf(idbuf, sizeof(idbuf), "[RX] ID 0x%03lX: ", frame.id);
       Serial.print(idbuf);
-      for (int i = 0; i < frame.length; i++) {
+      for (int i = 0; i < frame.length; i++)
+      {
         char hexbuf[8];
         snprintf(hexbuf, sizeof(hexbuf), "%02X", frame.data.bytes[i]);
         Serial.print(hexbuf);
@@ -231,12 +259,14 @@ void checkCANMessages() {
 }
 
 // ====== TIMEOUT FUNCTION ======
-bool isTimeout(unsigned long startTime, unsigned long timeoutMs) {
+bool isTimeout(unsigned long startTime, unsigned long timeoutMs)
+{
   return (millis() - startTime) >= timeoutMs;
 }
 
 // ====== SEND SDO READ ======
-bool sendSDO_Read(uint16_t index, uint8_t subindex) {
+bool sendSDO_Read(uint16_t index, uint8_t subindex)
+{
   CAN_FRAME frame;
   frame.id = SDO_REQUEST(SERVO_NODE_ID);
   frame.length = 8;
@@ -250,7 +280,8 @@ bool sendSDO_Read(uint16_t index, uint8_t subindex) {
   frame.data.bytes[6] = 0x00;
   frame.data.bytes[7] = 0x00;
   bool sent = CAN_INTERFACE.sendFrame(frame);
-  if (sent) {
+  if (sent)
+  {
     char buf[64];
     snprintf(buf, sizeof(buf), "[TX] Read SDO %04X:%02X", index, subindex);
     Serial.println(buf);
@@ -258,80 +289,95 @@ bool sendSDO_Read(uint16_t index, uint8_t subindex) {
   return sent;
 }
 
-// ====== SET SPEED ======
-bool setSpeed(int16_t leftSpeed, int16_t rightSpeed) {
+// ====== STATE MACHINE ======
+void updateStateMachine()
+{
+  switch (currentState)
+  {
+  case INIT_STORE:
+    if (sendSDO_1Byte(OD_STORE_MODE, 0x00, MODE_PROFILE_VELOCITY_STORE))
+    {
+      waitingForResponse = true;
+      stateStartTime = millis();
+      currentState = INIT_SET_MODE;
+    }
+    break;
+  case INIT_SET_MODE:
+    if (!waitingForResponse || isTimeout(stateStartTime, 1000))
+    {
+      if (sendSDO_1Byte(OD_OPERATION_MODE, 0x00, MODE_PROFILE_VELOCITY))
+      {
+        waitingForResponse = true;
+        stateStartTime = millis();
+        currentState = INIT_ENABLE1;
+      }
+    }
+    break;
+  case INIT_ENABLE1:
+    if (!waitingForResponse || isTimeout(stateStartTime, 1000))
+    {
+      if (sendSDO_2Bytes(OD_ENABLE_MODE, 0x00, CTRL_ENABLE_OPERATION))
+      {
+        waitingForResponse = true;
+        stateStartTime = millis();
+        currentState = STATE_READY;
+      }
+    }
+    break;
+  case STATE_READY:
+    Serial.println("🎉 Driver Ready! Sending demo velocity...");
+    // setSpeed(-100, 100);
+    setSpeedRPM(150.0f);        // ← ใช้ฟังก์ชันล้อเดียว
+
+    waitingForResponse = true;
+    stateStartTime = millis();
+    currentState = INIT_START;
+    break;
+  case INIT_START:
+    break;
+  case STATE_ERROR:
+    Serial.println("⚠️ Error in state machine");
+    break;
+  }
+}
+
+// ====== DECLARATIONS ======
+void processCheckConnectWithTimeout(unsigned long timeout_ms)
+{
+  unsigned long start = millis();
+  while (millis() - start < timeout_ms && !init_can)
+  {
+    checkCANMessages();
+  }
+  if (!init_can)
+    Serial.println("❌ No heartbeat detected");
+  else
+    currentState = INIT_SET_MODE;
+}
+// ---------------------------------------------------------------------------
+// 2) ฟังก์ชันแปลง  RPM ➜ DEC   (Signed 32-bit)
+// ---------------------------------------------------------------------------
+int32_t rpmToDEC(float rpm, uint32_t enc)
+{
+  double dec = rpm * 512.0 * enc / 1875.0;
+  if (dec >  2147483647.0) dec = 2147483647.0;
+  if (dec < -2147483648.0) dec = -2147483648.0;
+  return (int32_t)dec;
+}
+
+bool setSpeedRPM(float rpm)
+{
   if (currentState != STATE_READY) {
     Serial.println("Driver not ready!");
     return false;
   }
 
-  // Combine speeds (Little Endian format)
-  uint32_t combinedSpeed = ((uint32_t)(rightSpeed & 0xFFFF) << 16) | (leftSpeed & 0xFFFF);
-  char speedBuf[64];
-snprintf(speedBuf, sizeof(speedBuf), "Setting speeds: Left=%d RPM, Right=%d RPM", leftSpeed, rightSpeed);
-Serial.println(speedBuf);
-  return sendSDO_4Bytes(OD_TARGET_VELOCITY, 0x03, combinedSpeed);
-}
+  int32_t dec = rpmToDEC(rpm);
 
-// ====== STATE MACHINE ======
-void updateStateMachine() {
-  switch (currentState) {
-    case INIT_SET_MODE:
-      if (sendSDO_1Byte(OD_OPERATION_MODE, 0x00, MODE_PROFILE_VELOCITY)) {
-        waitingForResponse = true;
-        stateStartTime = millis();
-        currentState = INIT_ENABLE1;
-      }
-      break;
-    case INIT_ENABLE1:
-      if (!waitingForResponse || isTimeout(stateStartTime, 1000)) {
-        if (sendSDO_2Bytes(OD_ENABLE_MODE, 0x00, CTRL_SHUTDOWN)) {
-          waitingForResponse = true;
-          stateStartTime = millis();
-          currentState = INIT_ENABLE2;
-        }
-      }
-      break;
-    case INIT_ENABLE2:
-      if (!waitingForResponse || isTimeout(stateStartTime, 1000)) {
-        if (sendSDO_2Bytes(OD_ENABLE_MODE, 0x00, CTRL_SWITCH_ON)) {
-          waitingForResponse = true;
-          stateStartTime = millis();
-          currentState = INIT_ENABLE3;
-        }
-      }
-      break;
-    case INIT_ENABLE3:
-      if (!waitingForResponse || isTimeout(stateStartTime, 1000)) {
-        if (sendSDO_2Bytes(OD_ENABLE_MODE, 0x00, CTRL_ENABLE_OPERATION)) {
-          waitingForResponse = true;
-          stateStartTime = millis();
-          currentState = STATE_READY;
-        }
-      }
-      break;
-    case STATE_READY:
-      Serial.println("🎉 Driver Ready! Sending demo velocity...");
-      setSpeed(-100, 100);
-      waitingForResponse = true;
-      stateStartTime = millis();
-      currentState = INIT_START;
-      break;
-    case INIT_START:
-      break;
-    case STATE_ERROR:
-      Serial.println("⚠️ Error in state machine");
-      break;
-  }
-}
+  char buf[64];
+  sprintf(buf, "Setting speed: %.1f RPM  (DEC=%ld)", rpm, dec);
+  Serial.println(buf);
 
-
-// ====== DECLARATIONS ======
-void processCheckConnectWithTimeout(unsigned long timeout_ms) {
-  unsigned long start = millis();
-  while (millis() - start < timeout_ms && !init_can) {
-    checkCANMessages();
-  }
-  if (!init_can) Serial.println("❌ No heartbeat detected");
-  else currentState = INIT_SET_MODE;
+  return sendSDO_4Bytes(OD_TARGET_VELOCITY, 0x00, (uint32_t)dec);
 }
+   
