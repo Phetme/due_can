@@ -18,45 +18,54 @@
 #include <due_can.h>
 // Arduino Due CANopen Servo Controller (Non-blocking, State Machine)
 // ใช้กับไลบรารี due_can + CAN0
+#include <due_can.h>
 
+static const uint32_t BASE_ID = 0x10;     // ปรับได้ตามต้องการ
+static const size_t   MAX_BUF = 64;       // ยาวสุดที่รองรับต่อข้อความ
 
-void setup()
-{
+void setup() {
   Serial.begin(115200);
-  while (!Serial) ;                       // รอ USB enumeration
-
-  // ---------- 1. เริ่มต้น CAN0 ----------
-  if (!Can0.begin(CAN_BPS_500K)) {        // 500 kbit/s
-    Serial.println("CAN0 init FAILED");
-    while (1);
-  }
-  Serial.println("CAN0 init OK (500 kbps)");
-
-  // (ไม่จำเป็นต้อง watchFor() ถ้าเราส่งอย่างเดียว)
-  // ถ้าจะรับด้วยสามารถเปิดฟิลเตอร์ เช่น
-  // Can0.watchFor(0x201);   // รับ ID 0x201 อย่างเดียว
+  while (!Serial);                        // รอ Serial เปิด
+  Can0.begin(CAN_BPS_500K);               // 500 kbit/s
+  Serial.println("Type text then <Enter> to send over CAN");
 }
 
-/*---------------------------------------------------------------------------*/
-void loop()
-{
-  CAN_FRAME tx;
-  tx.id       = 0x10;       // 11-bit standard ID
-  tx.extended = 0;          // 0 = standard, 1 = extended (29-bit)
-  tx.length   = 6;          // DLC = 6
-  tx.data.byte[0] = 'H';
-  tx.data.byte[1] = 'e';
-  tx.data.byte[2] = 'l';
-  tx.data.byte[3] = 'l';
-  tx.data.byte[4] = 'o';
-  tx.data.byte[5] = '!';
+/* ส่งข้อมูลยาว len ไบต์ ออก CAN 8-ไบต์/เฟรม */
+void sendCAN(const uint8_t *data, size_t len) {
+  for (size_t off = 0; off < len; off += 8) {
+    CAN_FRAME tx;
+    tx.id       = BASE_ID;
+    tx.extended = 0;
+    tx.length   = (len - off >= 8) ? 8 : (len - off);
 
-  // ---------- 2. ส่งเฟรม ----------
-  if (Can0.sendFrame(tx)) {
-    Serial.println("Frame sent ✔");
-  } else {
-    Serial.println("Transmit queue full ✘");
+    /* คัดไบต์ลงเฟรม */
+    for (uint8_t i = 0; i < tx.length; i++)
+      tx.data.bytes[i] = data[off + i];
+
+    if (Can0.sendFrame(tx))
+      Serial.println(F("CAN ▶ sent"));
+    else
+      Serial.println(F("CAN ▶ queue full"));
   }
+}
 
-  delay(1000);
+void loop() {
+  static char  lineBuf[MAX_BUF];
+  static size_t idx = 0;
+
+  /* 1) เก็บอักษรจาก Serial ลง buffer */
+  while (Serial.available()) {
+    char c = Serial.read();
+Serial.println(c);
+    if (c == '\r') continue;             // ข้าม CR (สำหรับบาง terminal)
+
+    if (c == '\n') {                     // เจอ Enter → ส่ง CAN
+      if (idx > 0) {
+        sendCAN((uint8_t *)lineBuf, idx);
+        idx = 0;                         // เคลียร์ buffer
+      }
+    } else if (idx < MAX_BUF) {
+      lineBuf[idx++] = c;                // เก็บตัวอักษร
+    }
+  }
 }
