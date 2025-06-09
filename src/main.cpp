@@ -109,8 +109,7 @@ void setup()
   CAN_INTERFACE.watchFor();
 
   delay(500);
-  // processCheckConnectWithTimeout(10000);
-  currentState = INIT_SET_MODE;
+  processCheckConnectWithTimeout(10000);
   stateStartTime = millis();
 }
 
@@ -121,43 +120,10 @@ void loop()
 
   if (time_control.time_set - time_control.prve_set >= (1000 / 50))
   {
-    // if (!waitingForResponse)
-    // {
-    // updateStateMachine();
-    if (!waitingForResponse || isTimeout(stateStartTime, 1000))
+    if (!waitingForResponse)
     {
-      waitingForResponse = true;
-      stateStartTime = millis();
-      CAN_FRAME frame;
-      frame.id = 0x161;
-      frame.length = 8;
-      frame.extended = 0;
-      frame.data.bytes[0] = 0xCD; // Index LSB
-      frame.data.bytes[1] = 0xAB; // Index MSB
-      frame.data.bytes[2] = 0x00; // Sub-index
-      frame.data.bytes[3] = 0x28; // CS = 2F/2B/23/27… (เขียน 1-/2-/4-/…B)
-      frame.data.bytes[4] = 0x01; // Data (1 byte)  ←– ย้ายมา byte4 ตาม CANopen
-      frame.data.bytes[5] = 0x00;
-      frame.data.bytes[6] = 0x00;
-      frame.data.bytes[7] = 0x00;
-
-      if (CAN_INTERFACE.sendFrame(frame))
-      {
-        /* ---- เตรียมค่าที่จะฝังลงสตริง ---- */
-        uint16_t index = (uint16_t)frame.data.bytes[1] << 8 | frame.data.bytes[0];
-        uint8_t subidx = frame.data.bytes[2];
-        uint8_t value = frame.data.bytes[4]; // 1-byte data
-
-        char buf[64];
-        snprintf(buf, sizeof(buf),
-                 "[TX] SDO 1B %04X:%02X = %02X",
-                 index,  // %04X
-                 subidx, // %02X
-                 value); // %02X
-        Serial.println(buf);
-      }
+    updateStateMachine();
     }
-    // }
     time_control.prve_set = time_control.time_set;
   }
 
@@ -355,7 +321,7 @@ void updateStateMachine()
       {
         waitingForResponse = true;
         stateStartTime = millis();
-        // currentState = INIT_ENABLE2;
+        currentState = INIT_ENABLE2;
       }
     }
     break;
