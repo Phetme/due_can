@@ -61,7 +61,6 @@ static const uint32_t ENCODER_RESOLUTION = 10000; // Pulse / rev
 
 //=================================//
 
-
 //======== Melody box CAN ========//
 
 // CAN Frame IDs
@@ -83,8 +82,6 @@ static const uint32_t ENCODER_RESOLUTION = 10000; // Pulse / rev
 #define POS_END 7       // ตัวจบ (02)
 
 //=================================//
-
-
 
 bool isTimeout(unsigned long startTime, unsigned long timeoutMs);
 
@@ -149,7 +146,7 @@ bool sendGuideSensor_1Byte(uint16_t index, uint8_t address, uint8_t data);
 uint8_t calculateXOR(uint8_t data[]);
 void printFrame(CAN_FRAME frame);
 void sendPlayCommand(uint8_t folder, uint8_t volume);
-
+void processSerialCommand(String command);
 // ====== SETUP ======
 void setup()
 {
@@ -163,7 +160,7 @@ void setup()
 
   delay(500);
   // processCheckConnectWithTimeout(10000);
-  currentState = INIT_SENSOR_GUILD;
+  // currentState = INIT_SENSOR_GUILD;
 
   stateStartTime = millis();
 }
@@ -172,22 +169,47 @@ void loop()
 {
   time_control.time_set = millis();
   time_control.time_check_msg = millis();
+  time_control.time_guide_sensor = millis();
+  // if (time_control.time_set - time_control.prve_set >= (1000 / 50))
+  // {
+  //   if (!waitingForResponse)
+  //   {
+  //     updateStateMachine();
+  //   }
+  //   time_control.prve_set = time_control.time_set;
+  // }
 
-  if (time_control.time_set - time_control.prve_set >= (1000 / 50))
+  // if (time_control.time_check_msg - time_control.prve_check_msg >= (1000 / 50))
+  // {
+  //   if (waitingForResponse)
+  //   {
+  //     checkCANMessages();
+  //   }
+  //   time_control.prve_check_msg = time_control.time_check_msg;
+  // }
+  if (time_control.time_guide_sensor - time_control.prve_guide_sensor >= (1000 / 100))
   {
-    if (!waitingForResponse)
-    {
-      updateStateMachine();
-    }
-    time_control.prve_set = time_control.time_set;
+
+    // if (!waitingForResponse || isTimeout(stateStartTime, 1000))
+    //   {
+    //     if (sendGuideSensor_1Byte(CMD_GUIDE_SENSOR, READ_GUIDE_SENSOR, DATA_GUIDE_SENSOR))
+    //     {
+    //       waitingForResponse = true;
+    //       stateStartTime = millis();
+    //       currentState = STATE_READY;
+    //     }
+    //   }
+      // ตรวจสอบคำสั่งจาก Serial
+  if (Serial.available()) {
+    String input = Serial.readStringUntil('\n');
+    input.trim();
+    Serial.print("Received command: ");
+    Serial.println(input);
+    processSerialCommand(input);
   }
 
-  if (time_control.time_check_msg - time_control.prve_check_msg >= (1000 / 50))
-  {
-    if (waitingForResponse) {
-    checkCANMessages();
-    }
-    time_control.prve_check_msg = time_control.time_check_msg;
+
+    time_control.prve_guide_sensor = time_control.time_guide_sensor;
   }
 }
 
@@ -267,7 +289,7 @@ bool sendSDO_4Bytes(uint16_t index, uint8_t subindex, uint32_t data)
 void checkCANMessages()
 {
   CAN_FRAME frame;
-  
+
   if (CAN_INTERFACE.available())
   {
     CAN_INTERFACE.read(frame);
@@ -279,7 +301,7 @@ void checkCANMessages()
           frame.data.bytes[POS_END] == 0x02)
       {
 
-              waitingForResponse = false;
+        waitingForResponse = false;
 
         // ตรวจสอบค่า XOR
         uint8_t calculated_xor = calculateXOR(frame.data.bytes);
@@ -309,8 +331,7 @@ void checkCANMessages()
         if (xor_valid)
         {
           Serial.println("✅ XOR ถูกต้อง");
-                waitingForResponse = false;
-
+          waitingForResponse = false;
         }
         else
         {
@@ -686,4 +707,43 @@ void sendStopCommand()
 
   Serial.print("⏹ ส่งคำสั่งหยุดเล่น | Frame: ");
   printFrame(frame);
+}
+// ฟังก์ชันประมวลผลคำสั่งจาก Serial
+void processSerialCommand(String command)
+{
+  if (command.startsWith("play,"))
+  {
+    // คำสั่งรูปแบบ: play,folder,volume
+    int firstComma = command.indexOf(',');
+    int secondComma = command.indexOf(',', firstComma + 1);
+
+    if (firstComma > 0 && secondComma > firstComma)
+    {
+      String folderStr = command.substring(firstComma + 1, secondComma);
+      String volumeStr = command.substring(secondComma + 1);
+
+      uint8_t folder = folderStr.toInt();
+      uint8_t volume = volumeStr.toInt();
+
+      // ตรวจสอบค่าที่ถูกต้อง
+      if (folder >= 1 && folder <= 255 && volume >= 0 && volume <= 30)
+      {
+        sendPlayCommand(folder, volume);
+      }
+      else
+      {
+        Serial.println("✗ ค่าไม่ถูกต้อง: โฟลเดอร์ (1-255), ระดับเสียง (0-30)");
+      }
+    }
+    else
+    {
+      Serial.println("✗ รูปแบบคำสั่งไม่ถูกต้อง: play,folder,volume");
+    }
+  }
+  else
+  {
+    Serial.println("✗ คำสั่งไม่รู้จัก");
+    Serial.println("ใช้: play,folder,volume");
+    Serial.println("ตัวอย่าง: play,2,28");
+  }
 }
