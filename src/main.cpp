@@ -22,11 +22,13 @@
 // ====== CONFIG ======
 #define SERVO_NODE_ID 1
 #define CAN_INTERFACE Can0
+#define GUIDE_SENSOR_NODE_ID 1
 
 // COB-IDs
 #define SDO_REQUEST(node_id) (0x600 + node_id)
 #define SDO_RESPONSE(node_id) (0x580 + node_id)
 #define CHECK_RESPONSE(node_id) (0x700 + node_id)
+#define GUIDE_SENSOR_REQUEST(node_id) (0x000 + node_id)
 
 // Object Dictionary
 #define OD_STORE_MODE 0x2FF0
@@ -37,8 +39,7 @@
 
 #define MODE_PROFILE_VELOCITY 3
 #define MODE_PROFILE_VELOCITY_STORE 0xA
-static const uint32_t ENCODER_RESOLUTION = 10000;    // Pulse / rev
-
+static const uint32_t ENCODER_RESOLUTION = 10000; // Pulse / rev
 
 #define WRITE_1_BYTE 0x2F
 #define WRITE_2_BYTES 0x2B
@@ -49,6 +50,19 @@ static const uint32_t ENCODER_RESOLUTION = 10000;    // Pulse / rev
 #define CTRL_SWITCH_ON 0x0007
 #define CTRL_ENABLE_OPERATION 0x000F
 
+//========GUIDE SENSOR 16BIT========//
+
+// CANBUS GUIDE SENSOR
+#define CMD_GUIDE_SENSOR 0xABCD
+// ADDRESS CANBUS
+#define READ_GUIDE_SENSOR 0x28
+// DATA CANBUS
+#define DATA_GUIDE_SENSOR 0x01
+
+//=================================//
+
+bool isTimeout(unsigned long startTime, unsigned long timeoutMs);
+
 // ====== STATE ======
 enum InitState
 {
@@ -57,7 +71,8 @@ enum InitState
   INIT_SET_MODE,
   INIT_ENABLE1,
   STATE_READY,
-  STATE_ERROR
+  STATE_ERROR,
+  INIT_SENSOR_GUILD
 };
 
 InitState currentState = INIT_START;
@@ -92,6 +107,8 @@ struct TimeControl
   unsigned long prve_set;
   unsigned long time_check_msg;
   unsigned long prve_check_msg;
+  unsigned long time_guide_sensor;
+  unsigned long prve_guide_sensor;
 };
 
 TimeControl time_control = {};
@@ -102,6 +119,8 @@ void updateStateMachine();
 void checkCANMessages();
 bool setSpeedRPM(float rpm);
 int32_t rpmToDEC(float rpm, uint32_t enc = ENCODER_RESOLUTION);
+bool sendGuideSensor_1Byte(uint16_t index, uint8_t address, uint8_t data);
+
 // ====== SETUP ======
 void setup()
 {
@@ -115,7 +134,7 @@ void setup()
 
   delay(500);
   // processCheckConnectWithTimeout(10000);
-          currentState = INIT_STORE;
+  currentState = INIT_SENSOR_GUILD;
 
   stateStartTime = millis();
 }
@@ -134,11 +153,11 @@ void loop()
     time_control.prve_set = time_control.time_set;
   }
 
-  if (time_control.time_check_msg - time_control.prve_check_msg >= (1000 / 10))
+  if (time_control.time_check_msg - time_control.prve_check_msg >= (1000 / 50))
   {
-    // if (waitingForResponse) {
+    if (waitingForResponse) {
     checkCANMessages();
-    // }
+    }
     time_control.prve_check_msg = time_control.time_check_msg;
   }
 }
@@ -241,6 +260,19 @@ void checkCANMessages()
       Serial.println("[RX] Heartbeat detected!");
       init_can = true;
     }
+    else if (frame.id == GUIDE_SENSOR_REQUEST(GUIDE_SENSOR_NODE_ID) && frame.data.bytes[0] == 0xCD && frame.data.bytes[1] == 0xAB)
+    {
+      Serial.println("[RX] Guide Sensor detected!");
+      for (int i = 0; i < frame.length; i++)
+      {
+        char hexbuf[8];
+        snprintf(hexbuf, sizeof(hexbuf), "%02X", frame.data.bytes[i]);
+        Serial.print(hexbuf);
+        Serial.print(" ");
+      }
+      Serial.println();
+      waitingForResponse = false;
+    }
     else
     {
       char idbuf[32];
@@ -320,14 +352,14 @@ void updateStateMachine()
       {
         waitingForResponse = true;
         stateStartTime = millis();
-        currentState = STATE_READY;
+        currentState = INIT_SENSOR_GUILD;
       }
     }
     break;
   case STATE_READY:
     Serial.println("🎉 Driver Ready! Sending demo velocity...");
     // setSpeed(-100, 100);
-    setSpeedRPM(300.0f);        // ← ใช้ฟังก์ชันล้อเดียว
+    setSpeedRPM(300.0f); // ← ใช้ฟังก์ชันล้อเดียว
 
     waitingForResponse = true;
     stateStartTime = millis();
@@ -337,6 +369,16 @@ void updateStateMachine()
     break;
   case STATE_ERROR:
     Serial.println("⚠️ Error in state machine");
+  case INIT_SENSOR_GUILD:
+    if (!waitingForResponse || isTimeout(stateStartTime, 10000))
+    {
+      if (sendGuideSensor_1Byte(CMD_GUIDE_SENSOR, READ_GUIDE_SENSOR, DATA_GUIDE_SENSOR))
+      {
+        waitingForResponse = true;
+        stateStartTime = millis();
+        currentState = INIT_SENSOR_GUILD;
+      }
+    }
     break;
   }
 }
@@ -360,14 +402,17 @@ void processCheckConnectWithTimeout(unsigned long timeout_ms)
 int32_t rpmToDEC(float rpm, uint32_t enc)
 {
   double dec = rpm * 512.0 * enc / 1875.0;
-  if (dec >  2147483647.0) dec = 2147483647.0;
-  if (dec < -2147483648.0) dec = -2147483648.0;
+  if (dec > 2147483647.0)
+    dec = 2147483647.0;
+  if (dec < -2147483648.0)
+    dec = -2147483648.0;
   return (int32_t)dec;
 }
 
 bool setSpeedRPM(float rpm)
 {
-  if (currentState != STATE_READY) {
+  if (currentState != STATE_READY)
+  {
     Serial.println("Driver not ready!");
     return false;
   }
@@ -380,4 +425,27 @@ bool setSpeedRPM(float rpm)
 
   return sendSDO_4Bytes(OD_TARGET_VELOCITY, 0x00, (uint32_t)dec);
 }
-   
+// ====== SDO SEND GUDIE SENSOR ======
+bool sendGuideSensor_1Byte(uint16_t index, uint8_t address, uint8_t data)
+{
+  CAN_FRAME frame;
+  frame.id = GUIDE_SENSOR_REQUEST(GUIDE_SENSOR_NODE_ID);
+  frame.length = 8;
+  frame.extended = false;
+  frame.data.bytes[0] = index & 0xFF;
+  frame.data.bytes[1] = index >> 8;
+  frame.data.bytes[2] = 0;
+  frame.data.bytes[3] = address;
+  frame.data.bytes[4] = 0;
+  frame.data.bytes[5] = data;
+  frame.data.bytes[6] = 0;
+  frame.data.bytes[7] = 0;
+  bool sent = CAN_INTERFACE.sendFrame(frame);
+  if (sent)
+  {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "[TX] SDO 1B %04X:%02X = %02X", index, address, data);
+    Serial.println(buf);
+  }
+  return sent;
+}
