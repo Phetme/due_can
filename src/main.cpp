@@ -58,6 +58,28 @@
 
 //=================================//
 
+//======== Melody box CAN ========//
+
+// CAN Frame IDs
+#define COMMAND_FRAME_ID 0x200  // ส่งคำสั่งไปยังลำโพง (frame ID 200)
+#define RESPONSE_FRAME_ID 0x201 // รับ feedback จากลำโพง (frame ID 201)
+
+// Command bytes
+#define PLAY_COMMAND 0x51     // คำสั่งเล่นเสียง
+#define FEEDBACK_COMMAND 0x52 // feedback จากลำโพง
+
+// Frame structure positions (8 bytes)
+#define POS_START 0     // เริ่มต้น (01)
+#define POS_COMMAND 1   // คำสั่ง (51/52)
+#define POS_FOLDER 2    // หมายเลขโฟลเดอร์
+#define POS_VOLUME 3    // ระดับเสียง
+#define POS_RESERVED1 4 // สำรอง (00)
+#define POS_RESERVED2 5 // สำรอง (00)
+#define POS_XOR 6       // ค่า XOR
+#define POS_END 7       // ตัวจบ (02)
+
+//=================================//
+
 /// @param startTime
 /// @param timeoutMs
 /// @return
@@ -118,7 +140,9 @@ void processCheckConnectWithTimeout(unsigned long timeout_ms);
 void updateStateMachine();
 void checkCANMessages();
 bool sendGuideSensor_1Byte(uint16_t index, uint8_t address, uint8_t data);
-
+uint8_t calculateXOR(uint8_t data[]);
+void printFrame(CAN_FRAME frame);
+void sendPlayCommand(uint8_t folder, uint8_t volume);
 // ====== SETUP ======
 void setup()
 {
@@ -157,21 +181,21 @@ void loop()
     }
     time_control.prve_check_msg = time_control.time_check_msg;
   }
-  if (time_control.time_guide_sensor - time_control.prve_guide_sensor >= (1000 / 100)){
+  // if (time_control.time_guide_sensor - time_control.prve_guide_sensor >= (1000 / 100))
+  // {
 
-  if (!waitingForResponse || isTimeout(stateStartTime, 1000))
-    {
-      if (sendGuideSensor_1Byte(CMD_GUIDE_SENSOR, READ_GUIDE_SENSOR, DATA_GUIDE_SENSOR))
-      {
-        waitingForResponse = true;
-        stateStartTime = millis();
-        currentState = STATE_READY;
-      }
-    }
-      
-    time_control.prve_guide_sensor = time_control.time_guide_sensor;
+  //   if (!waitingForResponse || isTimeout(stateStartTime, 1000))
+  //   {
+  //     if (sendGuideSensor_1Byte(CMD_GUIDE_SENSOR, READ_GUIDE_SENSOR, DATA_GUIDE_SENSOR))
+  //     {
+  //       waitingForResponse = true;
+  //       stateStartTime = millis();
+  //       currentState = STATE_READY;
+  //     }
+  //   }
 
-  }
+  //   time_control.prve_guide_sensor = time_control.time_guide_sensor;
+  // }
 }
 
 // ====== SDO SEND ======
@@ -219,6 +243,10 @@ bool sendGuideSensor_1Byte(uint16_t index, uint8_t address, uint8_t data)
   {
     char buf[64];
     snprintf(buf, sizeof(buf), "[TX] SDO 1B %04X:%02X = %02X", index, address, data);
+    Serial.print( frame.data.bytes[0],HEX);
+    Serial.print(" ");
+    Serial.print( frame.data.bytes[1],HEX);
+    Serial.print(" ");
     Serial.println(buf);
   }
   return sent;
@@ -278,8 +306,61 @@ void checkCANMessages()
   if (CAN_INTERFACE.available())
   {
     CAN_INTERFACE.read(frame);
+    if (frame.id == RESPONSE_FRAME_ID && frame.length == 8)
+    {
+      // ตรวจสอบ feedback frame ตามโปรโตคอล
+      if (frame.data.bytes[POS_START] == 0x01 &&
+          frame.data.bytes[POS_COMMAND] == FEEDBACK_COMMAND &&
+          frame.data.bytes[POS_END] == 0x02)
+      {
 
-    if (frame.id == SDO_RESPONSE(SERVO_NODE_ID))
+              waitingForResponse = false;
+
+        // ตรวจสอบค่า XOR
+        uint8_t calculated_xor = calculateXOR(frame.data.bytes);
+        bool xor_valid = (calculated_xor == frame.data.bytes[POS_XOR]);
+
+        Serial.print("📥 รับ feedback จากลำโพง: ");
+
+        if (frame.data.bytes[POS_FOLDER] == 0x00)
+        {
+          Serial.print("หยุดเล่นแล้ว");
+        }
+        else
+        {
+          Serial.print("กำลังเล่นโฟลเดอร์ AW");
+          if (frame.data.bytes[POS_FOLDER] < 100)
+            Serial.print("0");
+          if (frame.data.bytes[POS_FOLDER] < 10)
+            Serial.print("0");
+          Serial.print(frame.data.bytes[POS_FOLDER]);
+          Serial.print(" ระดับเสียง ");
+          Serial.print(frame.data.bytes[POS_VOLUME]);
+        }
+
+        Serial.print(" | Frame: ");
+        printFrame(frame);
+
+        if (xor_valid)
+        {
+          Serial.println("✅ XOR ถูกต้อง");
+                waitingForResponse = false;
+
+        }
+        else
+        {
+          Serial.print("❌ XOR ไม่ถูกต้อง! คำนวณได้: 0x");
+          if (calculated_xor < 16)
+            Serial.print("0");
+          Serial.print(calculated_xor, HEX);
+          Serial.print(", ได้รับ: 0x");
+          if (frame.data.bytes[POS_XOR] < 16)
+            Serial.print("0");
+          Serial.println(frame.data.bytes[POS_XOR], HEX);
+        }
+      }
+    }
+    else if (frame.id == SDO_RESPONSE(SERVO_NODE_ID))
     {
       Serial.print("[RX] SDO Response: ");
       for (int i = 0; i < frame.length; i++)
@@ -424,13 +505,17 @@ void updateStateMachine()
     }
     break;
   case STATE_READY:
-    Serial.println("🎉 Driver Ready! Sending demo velocity...");
-    // setSpeed(-100, 100);
-    // waitingForResponse = true;
-    // stateStartTime = millis();
-    currentState = INIT_START;
+    if (!waitingForResponse || isTimeout(stateStartTime, 1000))
+    {
+      Serial.println("🎉 Driver Ready! Sending demo velocity...");
+      setSpeed(-100, 100);
+      waitingForResponse = true;
+      stateStartTime = millis();
+      currentState = INIT_START;
+    }
     break;
   case INIT_START:
+    sendPlayCommand(2, 28); // ส่งคำสั่งเล่นเสียงโฟลเดอร์ 02 ระดับเสียง 28
     break;
   case STATE_ERROR:
     Serial.println("⚠️ Error in state machine");
@@ -460,4 +545,149 @@ void processCheckConnectWithTimeout(unsigned long timeout_ms)
     Serial.println("❌ No heartbeat detected");
   else
     currentState = INIT_SET_MODE;
+}
+
+// ฟังก์ชันคำนวณค่า XOR จากไบต์ที่ 0-5
+uint8_t calculateXOR(uint8_t data[])
+{
+  uint8_t xor_result = 0;
+  // XOR ของไบต์ที่ 0-5 (6 ไบต์แรก)
+  for (int i = 0; i < 6; i++)
+  {
+    xor_result ^= data[i];
+  }
+  return xor_result;
+}
+// ฟังก์ชันส่งคำสั่งเล่นเสียง
+void sendPlayCommand(uint8_t folder, uint8_t volume)
+{
+  CAN_FRAME frame;
+
+  // สร้าง CAN frame
+  frame.id = COMMAND_FRAME_ID; // Frame ID 200
+  frame.extended = false;      // Standard frame
+  frame.length = 8;            // 8 bytes
+
+  // เติมข้อมูลใน frame ตามโปรโตคอล
+  frame.data.bytes[POS_START] = 0x01;           // เริ่มต้น
+  frame.data.bytes[POS_COMMAND] = PLAY_COMMAND; // คำสั่งเล่น (0x51)
+  frame.data.bytes[POS_FOLDER] = folder;        // หมายเลขโฟลเดอร์
+  frame.data.bytes[POS_VOLUME] = volume;        // ระดับเสียง
+  frame.data.bytes[POS_RESERVED1] = 0x00;       // สำรอง
+  frame.data.bytes[POS_RESERVED2] = 0x00;       // สำรอง
+
+  // คำนวณค่า XOR จากไบต์ที่ 0-5
+  frame.data.bytes[POS_XOR] = calculateXOR(frame.data.bytes);
+
+  frame.data.bytes[POS_END] = 0x02; // ตัวจบ
+
+  // ส่ง frame
+  Can0.sendFrame(frame);
+
+  Serial.print("📤 ส่งคำสั่ง: เล่นโฟลเดอร์ AW");
+  if (folder < 100)
+    Serial.print("0");
+  if (folder < 10)
+    Serial.print("0");
+  Serial.print(folder);
+  Serial.print(" ระดับเสียง ");
+  Serial.print(volume);
+  Serial.print(" | Frame: ");
+  printFrame(frame);
+
+  // แสดงการคำนวณ XOR
+  Serial.print("💡 XOR Calculation: ");
+  for (int i = 0; i < 6; i++)
+  {
+    Serial.print("0x");
+    if (frame.data.bytes[i] < 16)
+      Serial.print("0");
+    Serial.print(frame.data.bytes[i], HEX);
+    if (i < 5)
+      Serial.print(" ^ ");
+  }
+  Serial.print(" = 0x");
+  if (frame.data.bytes[POS_XOR] < 16)
+    Serial.print("0");
+  Serial.println(frame.data.bytes[POS_XOR], HEX);
+}
+
+// ฟังก์ชันตรวจสอบการคำนวณ XOR (สำหรับ debug)
+void verifyXORCalculation()
+{
+  Serial.println("\n🔍 ตรวจสอบการคำนวณ XOR");
+
+  // ตัวอย่างจากเอกสาร: 01 51 02 1C 00 00 4E 02
+  uint8_t testData[8] = {0x01, 0x51, 0x02, 0x1C, 0x00, 0x00, 0x4E, 0x02};
+
+  Serial.print("📊 ข้อมูล: ");
+  for (int i = 0; i < 6; i++)
+  {
+    Serial.print("0x");
+    if (testData[i] < 16)
+      Serial.print("0");
+    Serial.print(testData[i], HEX);
+    Serial.print(" ");
+  }
+  Serial.println();
+
+  uint8_t calculated = calculateXOR(testData);
+  Serial.print("🧮 XOR คำนวณได้: 0x");
+  if (calculated < 16)
+    Serial.print("0");
+  Serial.println(calculated, HEX);
+
+  Serial.print("📋 XOR ในเอกสาร: 0x");
+  if (testData[6] < 16)
+    Serial.print("0");
+  Serial.println(testData[6], HEX);
+
+  if (calculated == testData[6])
+  {
+    Serial.println("✅ การคำนวณ XOR ถูกต้อง!");
+  }
+  else
+  {
+    Serial.println("❌ การคำนวณ XOR ไม่ถูกต้อง!");
+  }
+}
+
+// ฟังก์ชันแสดง frame ในรูปแบบ hex (พร้อมช่องว่าง)
+void printFrame(CAN_FRAME frame)
+{
+  for (int i = 0; i < frame.length; i++)
+  {
+    if (frame.data.bytes[i] < 16)
+      Serial.print("0");
+    Serial.print(frame.data.bytes[i], HEX);
+    Serial.print(" ");
+  }
+  Serial.println();
+}
+// ฟังก์ชันส่งคำสั่งหยุดเล่น
+void sendStopCommand()
+{
+  CAN_FRAME frame;
+
+  frame.id = COMMAND_FRAME_ID;
+  frame.extended = false;
+  frame.length = 8;
+
+  // หยุดเล่น: folder = 0x00
+  frame.data.bytes[POS_START] = 0x01;
+  frame.data.bytes[POS_COMMAND] = PLAY_COMMAND;
+  frame.data.bytes[POS_FOLDER] = 0x00; // 0x00 = หยุดเล่น
+  frame.data.bytes[POS_VOLUME] = 0x1C; // ระดับเสียงใดก็ได้
+  frame.data.bytes[POS_RESERVED1] = 0x00;
+  frame.data.bytes[POS_RESERVED2] = 0x00;
+
+  // คำนวณค่า XOR
+  frame.data.bytes[POS_XOR] = calculateXOR(frame.data.bytes);
+
+  frame.data.bytes[POS_END] = 0x02;
+
+  Can0.sendFrame(frame);
+
+  Serial.print("⏹ ส่งคำสั่งหยุดเล่น | Frame: ");
+  printFrame(frame);
 }
