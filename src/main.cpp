@@ -147,6 +147,8 @@ uint8_t calculateXOR(uint8_t data[]);
 void printFrame(CAN_FRAME frame);
 void sendPlayCommand(uint8_t folder, uint8_t volume);
 void processSerialCommand(String command);
+void calculateXORTEST();
+
 // ====== SETUP ======
 void setup()
 {
@@ -167,9 +169,9 @@ void setup()
 
 void loop()
 {
-  time_control.time_set = millis();
-  time_control.time_check_msg = millis();
-  time_control.time_guide_sensor = millis();
+  // time_control.time_set = millis();
+  // time_control.time_check_msg = millis();
+  // time_control.time_guide_sensor = millis();
   // if (time_control.time_set - time_control.prve_set >= (1000 / 50))
   // {
   //   if (!waitingForResponse)
@@ -187,8 +189,8 @@ void loop()
   //   }
   //   time_control.prve_check_msg = time_control.time_check_msg;
   // }
-  if (time_control.time_guide_sensor - time_control.prve_guide_sensor >= (1000 / 100))
-  {
+  // if (time_control.time_guide_sensor - time_control.prve_guide_sensor >= (1000 / 100))
+  // {
 
     // if (!waitingForResponse || isTimeout(stateStartTime, 1000))
     //   {
@@ -200,17 +202,19 @@ void loop()
     //     }
     //   }
       // ตรวจสอบคำสั่งจาก Serial
-  if (Serial.available()) {
-    String input = Serial.readStringUntil('\n');
-    input.trim();
-    Serial.print("Received command: ");
-    Serial.println(input);
-    processSerialCommand(input);
-  }
+  // if (Serial.available()) {
+  //   String input = Serial.readStringUntil('\n');
+  //   input.trim();
+  //   Serial.print("Received command: ");
+  //   Serial.println(input);
+  //   processSerialCommand(input);
+  // }
 
 
-    time_control.prve_guide_sensor = time_control.time_guide_sensor;
-  }
+  //   time_control.prve_guide_sensor = time_control.time_guide_sensor;
+  // }
+  calculateXORTEST();
+  delay(1000); // Delay for demonstration purposes
 }
 
 // ====== SDO SEND ======
@@ -568,12 +572,35 @@ bool sendGuideSensor_1Byte(uint16_t index, uint8_t address, uint8_t data)
 uint8_t calculateXOR(uint8_t data[])
 {
   uint8_t xor_result = 0;
+
   // XOR ของไบต์ที่ 0-5 (6 ไบต์แรก)
   for (int i = 0; i < 6; i++)
   {
     xor_result ^= data[i];
   }
   return xor_result;
+  
+}
+// ฟังก์ชันคำนวณค่า XOR จากไบต์ที่ 0-5
+void calculateXORTEST()
+{
+ 
+uint8_t xor_result_dec = 0;
+uint8_t xor_result_0 = 0x01;
+uint8_t xor_result_1 = 0x51;
+uint8_t xor_result_2 = 0x02;
+uint8_t xor_result_3 = 0x1c;
+uint8_t xor_result_4 = 0;
+uint8_t xor_result_5 = 0;
+
+xor_result_dec = xor_result_0 ^ xor_result_1 ^ xor_result_2 ^ xor_result_3 ^ xor_result_4 ^ xor_result_5;
+  Serial.print(" XOR Calculation: ");
+  Serial.print("0x");
+  Serial.println(xor_result_dec, HEX);
+  Serial.print(" DEC Calculation: ");
+  Serial.print("");
+  Serial.println(xor_result_dec);
+
 }
 // ฟังก์ชันส่งคำสั่งเล่นเสียง
 void sendPlayCommand(uint8_t folder, uint8_t volume)
