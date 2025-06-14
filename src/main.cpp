@@ -715,11 +715,12 @@ void processSerialCommand(String command)
   {
     // คำสั่งรูปแบบ: play,folder,volume
     int firstComma = command.indexOf(',');
-    int secondComma = command.indexOf(',', firstComma + 1);
+    int secondComma = command.indexOf(',', firstComma + 1); // ค้นหาคอมม่าแรกและที่สอง โดยเรึ่มค้นหาจากตำแหน่งหลังคอมม่าแรก
+  
 
     if (firstComma > 0 && secondComma > firstComma)
     {
-      String folderStr = command.substring(firstComma + 1, secondComma);
+      String folderStr = command.substring(firstComma + 1, secondComma); 
       String volumeStr = command.substring(secondComma + 1);
 
       uint8_t folder = folderStr.toInt();
